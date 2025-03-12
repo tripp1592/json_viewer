@@ -1,3 +1,5 @@
 .idea/
 /build/
 /dist/
+/app_icon.png
+/app_icon.ico
