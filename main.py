@@ -3,6 +3,9 @@ from tkinter import ttk, filedialog, messagebox
 import json
 import sys
 
+# Global variable to track the details popup window
+detail_popup = None
+
 
 def build_tree(tree, parent, data):
     """
@@ -28,8 +31,9 @@ def build_tree(tree, parent, data):
 
 def load_json(tree, file_path=None):
     """
-    Load JSON from a file. If file_path is not provided,
-    prompt the user with a file dialog.
+    Load JSON from a file. If file_path is not provided, prompt the user.
+    Instead of adding a dummy "root" node, add the top-level items directly,
+    and leave them collapsed by default.
     """
     if not file_path:
         file_path = filedialog.askopenfilename(
@@ -42,44 +46,109 @@ def load_json(tree, file_path=None):
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        # Clear existing tree items
+        # Clear any existing items in the tree
         for child in tree.get_children():
             tree.delete(child)
-        # Insert a root node and build the tree
-        root_node = tree.insert("", "end", text="root", values=[""], open=True)
-        build_tree(tree, root_node, data)
+
+        # Check the type of the top-level JSON data and insert directly
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, (dict, list)):
+                    node = tree.insert(
+                        "", "end", text=str(key), values=[""], open=False
+                    )
+                    build_tree(tree, node, value)
+                else:
+                    tree.insert("", "end", text=str(key), values=[repr(value)])
+        elif isinstance(data, list):
+            for i, value in enumerate(data):
+                if isinstance(value, (dict, list)):
+                    node = tree.insert(
+                        "", "end", text=f"[{i}]", values=[""], open=False
+                    )
+                    build_tree(tree, node, value)
+                else:
+                    tree.insert("", "end", text=f"[{i}]", values=[repr(value)])
+        else:
+            # For primitive types, insert directly.
+            tree.insert("", "end", text=repr(data), values=[""])
     except Exception as e:
         messagebox.showerror("Error", f"Failed to load JSON:\n{e}")
 
 
+def collapse_all(tree, node=""):
+    """
+    Recursively collapse all nodes in the Treeview.
+    If node is an empty string, collapse all top-level nodes.
+    """
+    if node == "":
+        for child in tree.get_children():
+            collapse_all(tree, child)
+    else:
+        tree.item(node, open=False)
+        for child in tree.get_children(node):
+            collapse_all(tree, child)
+
+
 def show_popup(text):
     """
-    Create a pop-up window to display the full text with wrapping.
+    Create (or update) a pop-up window to display full text with wrapping.
+    Only one details window is allowed at a time.
     """
-    popup = tk.Toplevel()
-    popup.title("Details")
-    popup.geometry("600x400")
+    global detail_popup
+    if detail_popup is not None and detail_popup.winfo_exists():
+        # Update the existing popup's content
+        text_widget = detail_popup.text_widget
+        text_widget.config(state="normal")
+        text_widget.delete("1.0", tk.END)
+        text_widget.insert("1.0", text)
+        text_widget.config(state="disabled")
+        detail_popup.lift()
+        return
 
-    text_widget = tk.Text(popup, wrap="word")
+    detail_popup = tk.Toplevel()
+    detail_popup.title("Details")
+    detail_popup.geometry("600x400")
+
+    text_widget = tk.Text(detail_popup, wrap="word")
     text_widget.insert("1.0", text)
     text_widget.config(state="disabled")
     text_widget.pack(fill="both", expand=True)
 
-    scrollbar = ttk.Scrollbar(popup, command=text_widget.yview)
+    scrollbar = ttk.Scrollbar(detail_popup, command=text_widget.yview)
     text_widget.config(yscrollcommand=scrollbar.set)
     scrollbar.pack(side="right", fill="y")
+
+    detail_popup.text_widget = text_widget
+
+    def on_destroy(event):
+        global detail_popup
+        detail_popup = None
+
+    detail_popup.bind("<Destroy>", on_destroy)
 
 
 def on_item_double_click(event, tree):
     """
-    On double-click, show a pop-up with the full key and value.
+    Handle double-click events on the Treeview.
+    Do not open a details popup if the click is on the expand/collapse icon
+    or if the value cell is empty.
     """
+    region = tree.identify("region", event.x, event.y)
+    if region == "icon":
+        return
+
     item_id = tree.identify_row(event.y)
     if not item_id:
         return
     key_text = tree.item(item_id, "text")
     values = tree.item(item_id, "values")
     value_text = values[0] if values else ""
+
+    # Only show details if there is content in the value cell
+    if not value_text.strip():
+        return
+
     full_text = f"Key: {key_text}\nValue: {value_text}"
     show_popup(full_text)
 
@@ -119,10 +188,21 @@ def main():
 
     tree.bind("<Double-1>", lambda event: on_item_double_click(event, tree))
 
-    btn_load = ttk.Button(root, text="Load JSON", command=lambda: load_json(tree))
-    btn_load.pack(pady=10)
+    # Create a frame for the buttons
+    button_frame = ttk.Frame(root)
+    button_frame.pack(pady=10)
 
-    # If a JSON file is passed as a command-line argument, load it automatically.
+    btn_load = ttk.Button(
+        button_frame, text="Load JSON", command=lambda: load_json(tree)
+    )
+    btn_load.pack(side="left", padx=5)
+
+    btn_collapse = ttk.Button(
+        button_frame, text="Collapse All", command=lambda: collapse_all(tree)
+    )
+    btn_collapse.pack(side="left", padx=5)
+
+    # Auto-load JSON file if passed as a command-line argument
     if len(sys.argv) > 1:
         file_path = sys.argv[1]
         load_json(tree, file_path)
