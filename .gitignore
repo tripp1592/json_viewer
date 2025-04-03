@@ -1,5 +1,6 @@
-.idea/
-/build/
-/dist/
-/app_icon.png
-/app_icon.ico
+.idea
+build
+dist
+.venv
+app_icon.png
+app_icon.ico
